@@ -422,10 +422,13 @@ def display_seat_status_page():
         plot_bgcolor='rgba(248, 249, 250, 0.5)',
         margin=dict(l=20, r=20, t=20, b=20),
         hovermode='closest',
-        dragmode=False  # 禁用拖拉
+        dragmode=False  # 必須禁用以修復手機滾動問題
     )
 
-    st.plotly_chart(fig, width='stretch', config={'displayModeBar': False})
+    st.plotly_chart(fig, width='stretch', config={
+        'displayModeBar': False,
+        'scrollZoom': False  # 禁用滾輪縮放，確保觸控滾動正常
+    })
 
     # 圖例說明
     col_legend1, col_legend2 = st.columns(2)
@@ -558,11 +561,14 @@ def display_seat_status_page():
                     margin=dict(l=10, r=10, t=10, b=30),
                     plot_bgcolor='rgba(0,0,0,0)',
                     paper_bgcolor='rgba(0,0,0,0)',
-                    dragmode=False,
+                    dragmode=False,  # 必須禁用以修復手機滾動問題
                     hovermode=False
                 )
 
-                st.plotly_chart(fig, width='stretch', config={'displayModeBar': False}, key=f"daily_{date}")
+                st.plotly_chart(fig, width='stretch', config={
+                    'displayModeBar': False,
+                    'scrollZoom': False  # 禁用滾輪縮放，確保觸控滾動正常
+                }, key=f"daily_{date}")
 
     st.divider()
 
