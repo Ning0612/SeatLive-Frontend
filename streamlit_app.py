@@ -14,14 +14,16 @@ from datetime import datetime, timezone, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 from dotenv import load_dotenv
+import glob
+import re
 
 # 載入環境變數
 load_dotenv()
 
 # 頁面設定
 st.set_page_config(
-    page_title="SeatLive - 餐廳座位監控",
-    page_icon="🪑",
+    page_title="安南屋-元智店 - 座位即時情況",
+    page_icon="🍽️",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -245,7 +247,7 @@ def get_recent_daily_occupancy(days=8):
 
 def display_seat_status_page():
     """顯示即時座位狀態和本週人流統計頁面"""
-    st.markdown('<div class="main-header">🪑 SeatLive 餐廳座位監控</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">🍽️ 安南屋-元智店 座位即時情況</div>', unsafe_allow_html=True)
 
     # 讀取座位狀態
     df = get_seat_status()
@@ -470,14 +472,25 @@ def display_seat_status_page():
                 if day_df.empty:
                     continue
 
-                # 提取時間（小時）
-                if 'time' in day_df.columns:
-                    day_df['hour'] = day_df['time'].str.split(':').str[0].astype(int)
+                # 提取時間區間資訊（15 分鐘區間）
+                if 'time_interval' in day_df.columns:
+                    # 從 time_interval (例如 "09:00-09:15") 提取開始時間
+                    day_df['start_time'] = day_df['time_interval'].str.split('-').str[0]
+                    day_df['hour'] = day_df['start_time'].str.split(':').str[0].astype(int)
+                    day_df['minute'] = day_df['start_time'].str.split(':').str[1].astype(int)
                 elif 'datetime' in day_df.columns:
-                    day_df['hour'] = pd.to_datetime(day_df['datetime']).dt.hour
+                    day_df['dt'] = pd.to_datetime(day_df['datetime'])
+                    day_df['hour'] = day_df['dt'].dt.hour
+                    day_df['minute'] = day_df['dt'].dt.minute
+                elif 'time' in day_df.columns:
+                    day_df['hour'] = day_df['time'].str.split(':').str[0].astype(int)
+                    day_df['minute'] = day_df['time'].str.split(':').str[1].astype(int)
 
-                # 按小時聚合（取平均）
-                hourly_data = day_df.groupby('hour')['occupancy_count'].mean().reset_index()
+                # 只保留 9:00-21:00 的資料（注意 21:00 是最後一個時段）
+                interval_data = day_df[(day_df['hour'] >= 9) & (day_df['hour'] < 21)].copy()
+
+                # 計算時間軸位置（9:00 = 0, 9:15 = 0.25, 9:30 = 0.5, ..., 20:45 = 11.75）
+                interval_data['time_position'] = (interval_data['hour'] - 9) + (interval_data['minute'] / 60)
 
                 # 顯示日期標題（包含星期幾）
                 weekday_name = ['週一', '週二', '週三', '週四', '週五', '週六', '週日'][date.weekday()]
@@ -487,10 +500,10 @@ def display_seat_status_page():
                 fig = go.Figure()
 
                 # 找出最大佔用數以標準化高度
-                max_occupancy = hourly_data['occupancy_count'].max() if not hourly_data.empty else 1
+                max_occupancy = interval_data['occupancy_count'].max() if not interval_data.empty else 1
 
-                for _, row in hourly_data.iterrows():
-                    hour = row['hour']
+                for _, row in interval_data.iterrows():
+                    time_pos = row['time_position']
                     occupancy = row['occupancy_count']
 
                     # 計算膠囊高度（標準化）
@@ -504,20 +517,20 @@ def display_seat_status_page():
                     else:
                         color = '#94a3b8'  # 低峰時段（灰藍色）
 
-                    # 繪製膠囊形狀（圓角矩形）
+                    # 繪製膠囊形狀（圓角矩形，寬度調整為 0.1 以適應 15 分鐘區間，避免重疊）
                     fig.add_shape(
                         type="rect",
-                        x0=hour - 0.3, x1=hour + 0.3,
+                        x0=time_pos - 0.1, x1=time_pos + 0.1,
                         y0=0, y1=height,
                         fillcolor=color,
                         line=dict(width=0),
                         opacity=0.8
                     )
 
-                    # 顯示數值（在膠囊上方）
-                    if occupancy > 0:
+                    # 顯示數值（在膠囊上方，僅顯示整點的數值以避免擁擠）
+                    if occupancy > 0 and row['minute'] == 0:
                         fig.add_annotation(
-                            x=hour,
+                            x=time_pos,
                             y=height + 0.05,
                             text=f"{occupancy:.0f}",
                             showarrow=False,
@@ -525,17 +538,14 @@ def display_seat_status_page():
                             yanchor='bottom'
                         )
 
-                # 設定圖表佈局
+                # 設定圖表佈局（X 軸為 9:00-21:00）
                 fig.update_layout(
                     height=150,
                     xaxis=dict(
-                        tickmode='linear',
-                        tick0=0,
-                        dtick=3,
-                        tickformat='%H時',
-                        tickvals=list(range(0, 24, 3)),
-                        ticktext=[f"{h}時" for h in range(0, 24, 3)],
-                        range=[-1, 24],
+                        tickmode='array',
+                        tickvals=[0, 3, 6, 9, 12],  # 對應 9時, 12時, 15時, 18時, 21時
+                        ticktext=['9時', '12時', '15時', '18時', '21時'],
+                        range=[-0.3, 12],  # 9:00-21:00 範圍，稍微緊湊避免左側空白
                         showgrid=False,
                         fixedrange=True
                     ),
@@ -554,6 +564,45 @@ def display_seat_status_page():
 
                 st.plotly_chart(fig, width='stretch', config={'displayModeBar': False}, key=f"daily_{date}")
 
+    st.divider()
+
+    # ============================================================
+    # 餐廳菜單區塊
+    # ============================================================
+    st.subheader("🍽️ 餐廳菜單")
+
+    # 讀取菜單圖片檔案
+    menu_dir = os.path.join(os.path.dirname(__file__), 'menu')
+    menu_files = sorted(glob.glob(os.path.join(menu_dir, 'menu_*.jpg')))
+
+    if menu_files:
+        # 從檔名提取日期（例如：menu_2025_12_08-1.jpg -> 2025-12-08）
+        first_file = os.path.basename(menu_files[0])
+        date_match = re.search(r'menu_(\d{4})_(\d{2})_(\d{2})', first_file)
+
+        if date_match:
+            menu_date = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
+            st.caption(f"📅 菜單更新日期：{menu_date}")
+
+        # 餐廳資訊
+        st.markdown("""
+        **🏪 餐廳名稱**：安南屋-元智店
+        **📋 線上菜單**：[點此查看完整菜單 PDF](https://www.yzu.edu.tw/admin/st/files/%E5%AE%BF%E6%9C%8D%E7%B5%84/%E5%AD%B8%E9%A4%90/113-1%E5%AD%B8%E6%9C%9F/%E5%AE%89%E5%8D%97%E5%B1%8B-%E8%8F%9C%E5%96%AE.pdf)
+        **⚠️ 免責聲明**：菜單內容僅供參考，實際供餐狀況請以餐廳現場為主
+        """)
+
+        # 使用 expander 顯示菜單圖片（避免佔用過多空間）
+        with st.expander("📖 點此展開查看菜單圖片", expanded=False):
+            for i, menu_file in enumerate(menu_files):
+                st.image(menu_file, caption=f"菜單頁面 {i+1}", use_container_width=True)
+    else:
+        st.info("ℹ️ 目前尚無菜單圖片")
+        st.markdown("""
+        **🏪 餐廳名稱**：安南屋-元智店
+        **📋 線上菜單**：[點此查看完整菜單 PDF](https://www.yzu.edu.tw/admin/st/files/%E5%AE%BF%E6%9C%8D%E7%B5%84/%E5%AD%B8%E9%A4%90/113-1%E5%AD%B8%E6%9C%9F/%E5%AE%89%E5%8D%97%E5%B1%8B-%E8%8F%9C%E5%96%AE.pdf)
+        **⚠️ 免責聲明**：菜單內容僅供參考，實際供餐狀況請以餐廳現場為主
+        """)
+
     # 不在這裡自動重新整理，改到 main() 函數最後
 
 
@@ -570,7 +619,7 @@ def main():
     display_seat_status_page()
 
     # 底部版權資訊（只顯示一次）
-    st.markdown('<div class="footer">© 2025 SeatLive - 餐廳座位監控系統</div>', unsafe_allow_html=True)
+    st.markdown('<div class="footer">© 2025 安南屋-元智店 座位即時情況系統</div>', unsafe_allow_html=True)
 
     # 每 5 秒自動重新整理（使用倒數計時避免閃爍）
     import time
