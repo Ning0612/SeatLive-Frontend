@@ -68,20 +68,38 @@ def initialize_firebase():
         if not firebase_admin._apps:
             # 優先使用 Streamlit secrets（用於 Streamlit Cloud 部署）
             if 'firebase' in st.secrets:
-                firebase_config = st.secrets.get('firebase', {})
-                database_url = st.secrets.get('FIREBASE_DATABASE_URL')
+                # Cloud 模式：從 Secrets 讀取 firebase 段落
+                firebase_section = st.secrets['firebase']
+                firebase_config = dict(firebase_section)
 
-                # 基礎檢查，避免使用者在 Secrets UI 漏填欄位
                 required_keys = {
                     'type', 'project_id', 'private_key_id', 'private_key',
                     'client_email', 'client_id', 'token_uri'
                 }
+
+                # 嘗試多種常見位置取得 DB URL（頂層為主，兼容少數放在段落內的狀況）
+                database_url = (
+                    st.secrets.get('FIREBASE_DATABASE_URL')
+                    or firebase_config.get('FIREBASE_DATABASE_URL')
+                    or firebase_config.get('databaseURL')
+                    or firebase_config.get('database_url')
+                )
+
                 missing_keys = required_keys - set(firebase_config.keys())
                 if missing_keys or not database_url:
+                    # 只顯示缺少的欄位名稱，不顯示敏感值
+                    missing_text = ", ".join(sorted(missing_keys)) if missing_keys else "(無缺漏)"
+                    present_text = ", ".join(sorted(firebase_config.keys())) or "(無)"
+                    db_present = bool(database_url)
                     st.error(
-                        "❌ Streamlit Secrets 缺少必要欄位，請確認已在 App Settings > Secrets 以 TOML 形式設定 [firebase] 及 FIREBASE_DATABASE_URL。"
+                        "❌ Streamlit Secrets 缺少必要欄位，請確認在 App Settings > Secrets 以 TOML 形式設定 [firebase] 與 FIREBASE_DATABASE_URL。"
                     )
                     st.info(
+                        f"缺少欄位: {missing_text}\n"
+                        f"已提供欄位: {present_text}\n"
+                        f"FIREBASE_DATABASE_URL 已提供: {db_present}"
+                    )
+                    st.caption(
                         "範例格式:\n"
                         "[firebase]\n"
                         "type='service_account'\n"
@@ -96,7 +114,6 @@ def initialize_firebase():
                     return False
 
                 # 確保換行符號正確解析
-                firebase_config = dict(firebase_config)
                 if isinstance(firebase_config.get('private_key'), str):
                     firebase_config['private_key'] = firebase_config['private_key'].replace('\\n', '\n')
 
