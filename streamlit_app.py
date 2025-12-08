@@ -23,38 +23,105 @@ st.set_page_config(
     page_title="SeatLive - 餐廳座位監控",
     page_icon="🪑",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # CSS 樣式
 st.markdown("""
 <style>
+    /* 移除 Streamlit 預設邊距以適配手機 */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+        padding-left: 1rem;
+        padding-right: 1rem;
+        max-width: 100%;
+    }
+
+    /* 背景透明以適配深色模式 */
+    .stApp {
+        background: transparent;
+    }
+
     .main-header {
         font-size: 2.5rem;
         font-weight: bold;
         color: #1f77b4;
         text-align: center;
-        margin-bottom: 2rem;
+        margin-bottom: 1.5rem;
+        margin-top: 1rem;
+        line-height: 1.2;
     }
+
+    /* 手機端適配標題 */
+    @media (max-width: 768px) {
+        .main-header {
+            font-size: 1.8rem;
+            margin-bottom: 1rem;
+        }
+    }
+
     .metric-card {
-        background-color: #f0f2f6;
+        background-color: rgba(240, 242, 246, 0.5);
         padding: 1rem;
         border-radius: 0.5rem;
         text-align: center;
     }
-    .seat-occupied {
-        background-color: #ff6b6b;
-        color: white;
-        padding: 0.5rem;
-        border-radius: 0.3rem;
-        font-weight: bold;
+
+    /* 強制 metric 數值和標籤置中 */
+    [data-testid="stMetricValue"] {
+        text-align: center !important;
+        justify-content: center !important;
+        display: flex !important;
+        width: 100% !important;
     }
-    .seat-available {
-        background-color: #51cf66;
-        color: white;
+
+    [data-testid="stMetricLabel"] {
+        text-align: center !important;
+        justify-content: center !important;
+        display: flex !important;
+        width: 100% !important;
+    }
+
+    [data-testid="metric-container"] {
+        text-align: center !important;
+    }
+
+    /* 底部版權資訊樣式 */
+    .footer {
+        text-align: center;
+        color: #666;
+        padding: 2rem 0 2rem 0;
+        font-size: 0.875rem;
+        border-top: 1px solid rgba(128, 128, 128, 0.2);
+        margin-top: 3rem;
+        margin-bottom: 0;
+        width: 100%;
+        clear: both;
+    }
+
+    /* 免責聲明樣式 */
+    .disclaimer {
+        text-align: center;
+        color: #999;
+        font-size: 0.75rem;
         padding: 0.5rem;
-        border-radius: 0.3rem;
-        font-weight: bold;
+        margin-top: 1rem;
+        font-style: italic;
+    }
+
+    /* 手機端適配 */
+    @media (max-width: 768px) {
+        .block-container {
+            padding-left: 0.5rem;
+            padding-right: 0.5rem;
+            padding-bottom: 2rem;
+        }
+
+        .footer {
+            font-size: 0.75rem;
+            padding: 1.5rem 0 1.5rem 0;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -68,57 +135,9 @@ def initialize_firebase():
         if not firebase_admin._apps:
             # 優先使用 Streamlit secrets（用於 Streamlit Cloud 部署）
             if 'firebase' in st.secrets:
-                # Cloud 模式：從 Secrets 讀取 firebase 段落
-                firebase_section = st.secrets['firebase']
-                firebase_config = dict(firebase_section)
-
-                required_keys = {
-                    'type', 'project_id', 'private_key_id', 'private_key',
-                    'client_email', 'client_id', 'token_uri'
-                }
-
-                # 嘗試多種常見位置取得 DB URL（頂層為主，兼容少數放在段落內的狀況）
-                database_url = (
-                    st.secrets.get('FIREBASE_DATABASE_URL')
-                    or firebase_config.get('FIREBASE_DATABASE_URL')
-                    or firebase_config.get('databaseURL')
-                    or firebase_config.get('database_url')
-                )
-
-                missing_keys = required_keys - set(firebase_config.keys())
-                if missing_keys or not database_url:
-                    # 只顯示缺少的欄位名稱，不顯示敏感值
-                    missing_text = ", ".join(sorted(missing_keys)) if missing_keys else "(無缺漏)"
-                    present_text = ", ".join(sorted(firebase_config.keys())) or "(無)"
-                    db_present = bool(database_url)
-                    st.error(
-                        "❌ Streamlit Secrets 缺少必要欄位，請確認在 App Settings > Secrets 以 TOML 形式設定 [firebase] 與 FIREBASE_DATABASE_URL。"
-                    )
-                    st.info(
-                        f"缺少欄位: {missing_text}\n"
-                        f"已提供欄位: {present_text}\n"
-                        f"FIREBASE_DATABASE_URL 已提供: {db_present}"
-                    )
-                    st.caption(
-                        "範例格式:\n"
-                        "[firebase]\n"
-                        "type='service_account'\n"
-                        "project_id='your-project-id'\n"
-                        "private_key_id='...'\n"
-                        "private_key='-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n'\n"
-                        "client_email='...@...iam.gserviceaccount.com'\n"
-                        "client_id='...'\n"
-                        "token_uri='https://oauth2.googleapis.com/token'\n"
-                        "FIREBASE_DATABASE_URL='https://<project>.firebaseio.com/'"
-                    )
-                    return False
-
-                # 確保換行符號正確解析
-                if isinstance(firebase_config.get('private_key'), str):
-                    firebase_config['private_key'] = firebase_config['private_key'].replace('\\n', '\n')
-
-                cred = credentials.Certificate(firebase_config)
-                st.success("✅ 使用 Streamlit Secrets 初始化 Firebase")
+                # Streamlit Cloud 模式
+                cred = credentials.Certificate(dict(st.secrets['firebase']))
+                database_url = st.secrets['FIREBASE_DATABASE_URL']
             else:
                 # 本地開發模式：使用環境變數
                 credentials_path = os.getenv('FIREBASE_CREDENTIALS_PATH')
@@ -139,7 +158,6 @@ def initialize_firebase():
                     return False
 
                 cred = credentials.Certificate(credentials_path)
-                st.success("✅ 使用本地憑證初始化 Firebase")
 
             # 初始化 Firebase
             firebase_admin.initialize_app(cred, {
@@ -147,9 +165,10 @@ def initialize_firebase():
             })
 
         return True
-    except Exception:
-        # 避免將詳細路徑與環境洩漏給終端使用者
-        st.error("❌ Firebase 初始化失敗，請稍後再試或聯絡管理員。")
+    except Exception as e:
+        st.error(f"❌ Firebase 初始化失敗: {e}")
+        import traceback
+        st.error(f"詳細錯誤：\n```\n{traceback.format_exc()}\n```")
         return False
 
 
@@ -181,25 +200,47 @@ def get_seat_status():
         return None
 
 
-def get_weekly_occupancy(week_number=None):
-    """從 Firebase 讀取每週統計資料"""
+def get_recent_daily_occupancy(days=8):
+    """從 Firebase 讀取近 N 日的時段統計資料"""
     try:
-        if week_number is None:
-            week_number = datetime.now().isocalendar()[1]
+        # 取得當前週次和前一週
+        current_week = datetime.now().isocalendar()[1]
+        weeks_to_fetch = [current_week, current_week - 1] if current_week > 1 else [current_week]
 
-        ref = db.reference(f'/occupancy_statistics/week_{week_number}')
-        data = ref.get()
+        all_data = []
 
-        if not data:
-            return None, week_number
+        # 從可能的週次中取得資料
+        for week_num in weeks_to_fetch:
+            ref = db.reference(f'/occupancy_statistics/week_{week_num}')
+            data = ref.get()
 
-        # 轉換為 DataFrame
-        df = pd.DataFrame(data.get('data', []))
-        return df, week_number
+            if data and 'detail_data' in data:
+                # 取得詳細的時段資料（非聚合資料）
+                detail_df = pd.DataFrame(data['detail_data'])
+                if not detail_df.empty:
+                    all_data.append(detail_df)
+
+        if not all_data:
+            return None
+
+        # 合併所有週次的資料
+        combined_df = pd.concat(all_data, ignore_index=True)
+
+        # 篩選近 N 日的資料
+        if 'datetime' in combined_df.columns:
+            combined_df['datetime'] = pd.to_datetime(combined_df['datetime'])
+            cutoff_date = datetime.now() - pd.Timedelta(days=days)
+            combined_df = combined_df[combined_df['datetime'] >= cutoff_date]
+        elif 'date' in combined_df.columns:
+            combined_df['date'] = pd.to_datetime(combined_df['date'])
+            cutoff_date = datetime.now() - pd.Timedelta(days=days)
+            combined_df = combined_df[combined_df['date'] >= cutoff_date]
+
+        return combined_df if not combined_df.empty else None
 
     except Exception as e:
-        st.error(f"❌ 讀取每週統計失敗: {e}")
-        return None, week_number
+        st.error(f"❌ 讀取近日統計失敗: {e}")
+        return None
 
 
 def display_seat_status_page():
@@ -295,20 +336,38 @@ def display_seat_status_page():
     # 使用 Plotly 繪製座位配置圖
     fig = go.Figure()
 
-    # 添加座位標記
+    # 添加座位標記（改為矩形）
     for _, row in seat_df.iterrows():
+        # 計算矩形大小
+        rect_size = 0.4 if row['seat_id'].startswith('T') else 0.25
+        font_size = 12 if row['seat_id'].startswith('T') else 10
+
+        # 添加矩形背景
+        fig.add_shape(
+            type="rect",
+            x0=row['x'] - rect_size, y0=row['y'] - rect_size,
+            x1=row['x'] + rect_size, y1=row['y'] + rect_size,
+            fillcolor=row['color'],
+            line=dict(width=2, color='#333'),
+        )
+
+        # 只添加座位 ID 文字（白色），狀態用顏色表示
+        fig.add_annotation(
+            x=row['x'],
+            y=row['y'],
+            text=row['seat_id'],
+            font=dict(size=font_size, color='white', family='Arial Black'),
+            showarrow=False,
+            xanchor='center',
+            yanchor='middle'
+        )
+
+        # 添加隱形的 hover 點
         fig.add_trace(go.Scatter(
             x=[row['x']],
             y=[row['y']],
-            mode='markers+text',
-            marker=dict(
-                size=row['size'],
-                color=row['color'],
-                line=dict(width=2, color='#333')
-            ),
-            text=f"{row['seat_id']}<br>{row['status']}",
-            textposition='middle center',
-            textfont=dict(size=10, color='white', family='Arial Black'),
+            mode='markers',
+            marker=dict(size=1, opacity=0),
             name=row['seat_id'],
             showlegend=False,
             hovertemplate=f"<b>{row['seat_id']}</b><br>狀態: {row['status']}<extra></extra>"
@@ -338,27 +397,30 @@ def display_seat_status_page():
         bgcolor="#f0f0f0"
     )
 
-    # 設定圖表佈局
+    # 設定圖表佈局（鎖定不可拖拉或縮放）
     fig.update_layout(
         height=500,
         xaxis=dict(
             range=[-0.5, 8.5],
             showgrid=False,
             zeroline=False,
-            showticklabels=False
+            showticklabels=False,
+            fixedrange=True  # 鎖定 X 軸
         ),
         yaxis=dict(
             range=[-2.5, 6.5],
             showgrid=False,
             zeroline=False,
-            showticklabels=False
+            showticklabels=False,
+            fixedrange=True  # 鎖定 Y 軸
         ),
-        plot_bgcolor='#f8f9fa',
+        plot_bgcolor='rgba(248, 249, 250, 0.5)',
         margin=dict(l=20, r=20, t=20, b=20),
-        hovermode='closest'
+        hovermode='closest',
+        dragmode=False  # 禁用拖拉
     )
 
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, width='stretch', config={'displayModeBar': False})
 
     # 圖例說明
     col_legend1, col_legend2 = st.columns(2)
@@ -367,51 +429,129 @@ def display_seat_status_page():
     with col_legend2:
         st.markdown('<div style="background-color: #51cf66; color: white; padding: 10px; border-radius: 5px; text-align: center; font-weight: bold;">🟢 空位</div>', unsafe_allow_html=True)
 
+    # 免責聲明
+    st.markdown('<div class="disclaimer">⚠️ 因延遲及辨識準確性，即時狀態僅供參考，請以實際現場狀況為主</div>', unsafe_allow_html=True)
+
     st.divider()
 
     # ============================================================
-    # 本週人流統計區塊
+    # 近日人流統計區塊
     # ============================================================
-    st.subheader("📈 本週人流統計")
+    st.subheader("📈 近日人流統計")
 
-    # 自動取得當前週次
-    current_week = datetime.now().isocalendar()[1]
+    # 讀取近 8 日的時段統計資料
+    recent_df = get_recent_daily_occupancy(days=8)
 
-    # 讀取本週統計資料
-    weekly_df, week_number = get_weekly_occupancy(current_week)
-
-    if weekly_df is None or weekly_df.empty:
-        st.info(f"ℹ️ 第 {current_week} 週尚無統計資料")
+    if recent_df is None or recent_df.empty:
+        st.info("ℹ️ 近 8 日尚無統計資料")
     else:
-        st.caption(f"📅 第 {week_number} 週統計資料")
+        # 確保有日期欄位
+        if 'datetime' in recent_df.columns:
+            recent_df['date'] = pd.to_datetime(recent_df['datetime']).dt.date
+        elif 'date' in recent_df.columns:
+            recent_df['date'] = pd.to_datetime(recent_df['date']).dt.date
 
-        # 計算每日平均
-        daily_avg = weekly_df.groupby(['weekday', 'weekday_zh'])['avg_occupancy'].mean().reset_index()
-        daily_avg = daily_avg.sort_values('weekday')
+        # 取得唯一的日期並排序（由新到舊）
+        unique_dates = sorted(recent_df['date'].unique(), reverse=True)
 
-        # 每日平均佔用趨勢圖
-        fig_daily = px.bar(
-            daily_avg,
-            x='weekday_zh',
-            y='avg_occupancy',
-            labels={'weekday_zh': '星期', 'avg_occupancy': '佔用數'},
-            color='avg_occupancy',
-            color_continuous_scale='RdYlGn_r',
-            text='avg_occupancy'
-        )
-        fig_daily.update_traces(texttemplate='%{text:.1f}', textposition='outside')
-        fig_daily.update_layout(
-            showlegend=False,
-            height=350,
-            xaxis_title="星期",
-            yaxis_title="佔用數"
-        )
-        st.plotly_chart(fig_daily, width='stretch')
+        if len(unique_dates) == 0:
+            st.info("ℹ️ 近 8 日尚無統計資料")
+        else:
+            st.caption(f"📅 顯示近 {len(unique_dates)} 日資料（最新日期在上方）")
 
-    # 以較長間隔重新整理以降低對後端的負載
-    import time
-    time.sleep(10)
-    st.rerun()
+            # 為每一天繪製時段分布圖
+            for date in unique_dates:
+                # 篩選該日期的資料
+                day_df = recent_df[recent_df['date'] == date].copy()
+
+                if day_df.empty:
+                    continue
+
+                # 提取時間（小時）
+                if 'time' in day_df.columns:
+                    day_df['hour'] = day_df['time'].str.split(':').str[0].astype(int)
+                elif 'datetime' in day_df.columns:
+                    day_df['hour'] = pd.to_datetime(day_df['datetime']).dt.hour
+
+                # 按小時聚合（取平均）
+                hourly_data = day_df.groupby('hour')['occupancy_count'].mean().reset_index()
+
+                # 顯示日期標題（包含星期幾）
+                weekday_name = ['週一', '週二', '週三', '週四', '週五', '週六', '週日'][date.weekday()]
+                st.markdown(f"**{date.strftime('%Y-%m-%d')} ({weekday_name})**")
+
+                # 繪製膠囊圖（類似圖片範例）
+                fig = go.Figure()
+
+                # 找出最大佔用數以標準化高度
+                max_occupancy = hourly_data['occupancy_count'].max() if not hourly_data.empty else 1
+
+                for _, row in hourly_data.iterrows():
+                    hour = row['hour']
+                    occupancy = row['occupancy_count']
+
+                    # 計算膠囊高度（標準化）
+                    height = (occupancy / max_occupancy) * 0.8 if max_occupancy > 0 else 0
+
+                    # 決定顏色（根據佔用率）
+                    if occupancy >= max_occupancy * 0.8:
+                        color = '#d946a6'  # 高峰時段（粉紅色）
+                    elif occupancy >= max_occupancy * 0.5:
+                        color = '#94a3b8'  # 中等時段（灰藍色）
+                    else:
+                        color = '#94a3b8'  # 低峰時段（灰藍色）
+
+                    # 繪製膠囊形狀（圓角矩形）
+                    fig.add_shape(
+                        type="rect",
+                        x0=hour - 0.3, x1=hour + 0.3,
+                        y0=0, y1=height,
+                        fillcolor=color,
+                        line=dict(width=0),
+                        opacity=0.8
+                    )
+
+                    # 顯示數值（在膠囊上方）
+                    if occupancy > 0:
+                        fig.add_annotation(
+                            x=hour,
+                            y=height + 0.05,
+                            text=f"{occupancy:.0f}",
+                            showarrow=False,
+                            font=dict(size=9, color='#666'),
+                            yanchor='bottom'
+                        )
+
+                # 設定圖表佈局
+                fig.update_layout(
+                    height=150,
+                    xaxis=dict(
+                        tickmode='linear',
+                        tick0=0,
+                        dtick=3,
+                        tickformat='%H時',
+                        tickvals=list(range(0, 24, 3)),
+                        ticktext=[f"{h}時" for h in range(0, 24, 3)],
+                        range=[-1, 24],
+                        showgrid=False,
+                        fixedrange=True
+                    ),
+                    yaxis=dict(
+                        showticklabels=False,
+                        showgrid=False,
+                        range=[0, 1],
+                        fixedrange=True
+                    ),
+                    margin=dict(l=10, r=10, t=10, b=30),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    dragmode=False,
+                    hovermode=False
+                )
+
+                st.plotly_chart(fig, width='stretch', config={'displayModeBar': False}, key=f"daily_{date}")
+
+    # 不在這裡自動重新整理，改到 main() 函數最後
 
 
 # ============================================================
@@ -423,13 +563,16 @@ def main():
     if not initialize_firebase():
         st.stop()
 
-    # 側邊欄
-    st.sidebar.title("🪑 SeatLive")
-    st.sidebar.markdown("---")
-    st.sidebar.caption("© 2025 SeatLive - 餐廳座位監控系統")
-
-    # 顯示主頁面（即時座位狀態 + 本週人流統計）
+    # 顯示主頁面（即時座位狀態 + 近日人流統計）
     display_seat_status_page()
+
+    # 底部版權資訊（只顯示一次）
+    st.markdown('<div class="footer">© 2025 SeatLive - 餐廳座位監控系統</div>', unsafe_allow_html=True)
+
+    # 每 5 秒自動重新整理（使用倒數計時避免閃爍）
+    import time
+    time.sleep(5)
+    st.rerun()
 
 
 if __name__ == "__main__":
