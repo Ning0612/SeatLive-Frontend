@@ -68,9 +68,39 @@ def initialize_firebase():
         if not firebase_admin._apps:
             # 優先使用 Streamlit secrets（用於 Streamlit Cloud 部署）
             if 'firebase' in st.secrets:
-                # Streamlit Cloud 模式
-                cred = credentials.Certificate(dict(st.secrets['firebase']))
-                database_url = st.secrets['FIREBASE_DATABASE_URL']
+                firebase_config = st.secrets.get('firebase', {})
+                database_url = st.secrets.get('FIREBASE_DATABASE_URL')
+
+                # 基礎檢查，避免使用者在 Secrets UI 漏填欄位
+                required_keys = {
+                    'type', 'project_id', 'private_key_id', 'private_key',
+                    'client_email', 'client_id', 'token_uri'
+                }
+                missing_keys = required_keys - set(firebase_config.keys())
+                if missing_keys or not database_url:
+                    st.error(
+                        "❌ Streamlit Secrets 缺少必要欄位，請確認已在 App Settings > Secrets 以 TOML 形式設定 [firebase] 及 FIREBASE_DATABASE_URL。"
+                    )
+                    st.info(
+                        "範例格式:\n"
+                        "[firebase]\n"
+                        "type='service_account'\n"
+                        "project_id='your-project-id'\n"
+                        "private_key_id='...'\n"
+                        "private_key='-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n'\n"
+                        "client_email='...@...iam.gserviceaccount.com'\n"
+                        "client_id='...'\n"
+                        "token_uri='https://oauth2.googleapis.com/token'\n"
+                        "FIREBASE_DATABASE_URL='https://<project>.firebaseio.com/'"
+                    )
+                    return False
+
+                # 確保換行符號正確解析
+                firebase_config = dict(firebase_config)
+                if isinstance(firebase_config.get('private_key'), str):
+                    firebase_config['private_key'] = firebase_config['private_key'].replace('\\n', '\n')
+
+                cred = credentials.Certificate(firebase_config)
                 st.success("✅ 使用 Streamlit Secrets 初始化 Firebase")
             else:
                 # 本地開發模式：使用環境變數
@@ -100,10 +130,9 @@ def initialize_firebase():
             })
 
         return True
-    except Exception as e:
-        st.error(f"❌ Firebase 初始化失敗: {e}")
-        import traceback
-        st.error(f"詳細錯誤：\n```\n{traceback.format_exc()}\n```")
+    except Exception:
+        # 避免將詳細路徑與環境洩漏給終端使用者
+        st.error("❌ Firebase 初始化失敗，請稍後再試或聯絡管理員。")
         return False
 
 
@@ -362,9 +391,9 @@ def display_seat_status_page():
         )
         st.plotly_chart(fig_daily, width='stretch')
 
-    # 強制每 5 秒自動重新整理
+    # 以較長間隔重新整理以降低對後端的負載
     import time
-    time.sleep(5)
+    time.sleep(10)
     st.rerun()
 
 
