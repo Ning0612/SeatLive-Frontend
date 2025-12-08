@@ -10,7 +10,7 @@ import streamlit as st
 import pandas as pd
 import firebase_admin
 from firebase_admin import credentials, db
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 from dotenv import load_dotenv
@@ -261,7 +261,10 @@ def display_seat_status_page():
     occupancy_rate = (occupied_seats / total_seats * 100) if total_seats > 0 else 0
 
     # 顯示現在時間
-    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # 建立 UTC+8 時區
+    utc8_timezone = timezone(timedelta(hours=8))
+    # 取得當前時間並轉換為 UTC+8
+    current_time = datetime.now(utc8_timezone).strftime('%Y-%m-%d %H:%M:%S')
     st.caption(f"🕒 現在時間：{current_time}")
 
     # ============================================================
