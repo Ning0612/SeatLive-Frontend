@@ -1,0 +1,16 @@
+name: Keep Streamlit App Alive
+
+on:
+  schedule:
+    - cron: "*/25 * * * *"  # 每 25 分鐘執行一次
+  workflow_dispatch:        # 可手動觸發
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send keep-alive request to Streamlit app
+        run: |
+          echo "Pinging Streamlit app to keep it alive..."
+          curl -L -s https://seatlive-frontend-q9bnxuvhjwuowj24ayvc7p.streamlit.app > /dev/null || true
