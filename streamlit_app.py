@@ -202,22 +202,26 @@ def get_seat_status():
         return None
 
 
-def get_recent_daily_occupancy(days=8):
-    """從 Firebase 讀取近 N 日的時段統計資料"""
+def get_weekday_aggregated_occupancy():
+    """
+    從 Firebase 讀取周一到週五的聚合統計資料
+
+    Returns:
+        dict: {weekday: DataFrame} 格式，weekday 為 0-4（週一到週五）
+    """
     try:
-        # 取得當前週次和前一週
+        # 取得當前週次和前幾週
         current_week = datetime.now().isocalendar()[1]
-        weeks_to_fetch = [current_week, current_week - 1] if current_week > 1 else [current_week]
+        weeks_to_fetch = [current_week - i for i in range(4) if current_week - i > 0]  # 取最近 4 週
 
         all_data = []
 
-        # 從可能的週次中取得資料
+        # 從可能的週次中取得詳細資料
         for week_num in weeks_to_fetch:
             ref = db.reference(f'/occupancy_statistics/week_{week_num}')
             data = ref.get()
 
             if data and 'detail_data' in data:
-                # 取得詳細的時段資料（非聚合資料）
                 detail_df = pd.DataFrame(data['detail_data'])
                 if not detail_df.empty:
                     all_data.append(detail_df)
@@ -228,20 +232,37 @@ def get_recent_daily_occupancy(days=8):
         # 合併所有週次的資料
         combined_df = pd.concat(all_data, ignore_index=True)
 
-        # 篩選近 N 日的資料
+        # 確保有必要的欄位
         if 'datetime' in combined_df.columns:
             combined_df['datetime'] = pd.to_datetime(combined_df['datetime'])
-            cutoff_date = datetime.now() - pd.Timedelta(days=days)
-            combined_df = combined_df[combined_df['datetime'] >= cutoff_date]
-        elif 'date' in combined_df.columns:
-            combined_df['date'] = pd.to_datetime(combined_df['date'])
-            cutoff_date = datetime.now() - pd.Timedelta(days=days)
-            combined_df = combined_df[combined_df['date'] >= cutoff_date]
 
-        return combined_df if not combined_df.empty else None
+        # 只保留周一到週五的資料（weekday 0-4）
+        combined_df = combined_df[combined_df['weekday'].isin([0, 1, 2, 3, 4])]
+
+        if combined_df.empty:
+            return None
+
+        # 按星期幾和時段聚合（取平均值）
+        aggregated = combined_df.groupby(['weekday', 'weekday_zh', 'time_interval']).agg({
+            'occupancy_count': 'mean'
+        }).reset_index()
+
+        aggregated['occupancy_count'] = aggregated['occupancy_count'].round(1)
+
+        # 將資料按星期分組
+        weekday_data = {}
+        for weekday in range(5):  # 0=週一, 4=週五
+            weekday_df = aggregated[aggregated['weekday'] == weekday].copy()
+            if not weekday_df.empty:
+                # 提取時間資訊
+                weekday_df['hour'] = weekday_df['time_interval'].str.split('-').str[0].str.split(':').str[0].astype(int)
+                weekday_df['minute'] = weekday_df['time_interval'].str.split('-').str[0].str.split(':').str[1].astype(int)
+                weekday_data[weekday] = weekday_df
+
+        return weekday_data if weekday_data else None
 
     except Exception as e:
-        st.error(f"❌ 讀取近日統計失敗: {e}")
+        st.error(f"❌ 讀取熱門時段統計失敗: {e}")
         return None
 
 
@@ -261,10 +282,22 @@ def display_live_seat_status():
     available_seats = total_seats - occupied_seats
     occupancy_rate = (occupied_seats / total_seats * 100) if total_seats > 0 else 0
 
-    # 顯示現在時間
-    utc8_timezone = timezone(timedelta(hours=8))
-    current_time = datetime.now(utc8_timezone).strftime('%Y-%m-%d %H:%M:%S')
-    st.caption(f"🕒 現在時間：{current_time}")
+    # 顯示上次資料更新時間（從座位狀態資料中取得最新的 last_update）
+    try:
+        # 取得所有座位的 last_update 時間，找出最新的一筆
+        last_updates = df['last_update'].dropna()
+        if not last_updates.empty:
+            # 找出最新的更新時間
+            latest_update = max(pd.to_datetime(last_updates))
+            update_time_str = latest_update.strftime('%Y-%m-%d %H:%M:%S')
+            st.caption(f"🕒 上次資料更新時間：{update_time_str}")
+        else:
+            st.caption(f"🕒 上次資料更新時間：無資料")
+    except Exception as e:
+        # 如果解析失敗，顯示當前時間作為備用
+        utc8_timezone = timezone(timedelta(hours=8))
+        current_time = datetime.now(utc8_timezone).strftime('%Y-%m-%d %H:%M:%S')
+        st.caption(f"🕒 現在時間：{current_time}")
 
     # 顯示統計卡片
     col1, col2, col3, col4 = st.columns(4)
@@ -435,129 +468,132 @@ def display_live_seat_status():
 
 @st.fragment(run_every="10s")
 def display_live_statistics():
-    """近日人流統計區塊（每 10 秒自動更新）"""
-    # 讀取近 8 日的時段統計資料
-    recent_df = get_recent_daily_occupancy(days=8)
-
-    if recent_df is None or recent_df.empty:
-        st.info("ℹ️ 近 8 日尚無統計資料")
-    else:
-        # 確保有日期欄位
-        if 'datetime' in recent_df.columns:
-            recent_df['date'] = pd.to_datetime(recent_df['datetime']).dt.date
-        elif 'date' in recent_df.columns:
-            recent_df['date'] = pd.to_datetime(recent_df['date']).dt.date
-
-        # 取得唯一的日期並排序（由新到舊）
-        unique_dates = sorted(recent_df['date'].unique(), reverse=True)
-
-        if len(unique_dates) == 0:
-            st.info("ℹ️ 近 8 日尚無統計資料")
+    """熱門時段區塊（顯示周一到週五的人流分析，可左右切換）"""
+    # 初始化 session_state 記錄當前選擇的星期
+    if 'selected_weekday' not in st.session_state:
+        current_weekday = datetime.now().weekday()  # 0=週一, 6=週日
+        # 如果是週六(5)或週日(6)，預設顯示週一(0)；否則顯示當天
+        if current_weekday >= 5:
+            st.session_state.selected_weekday = 0  # 週六日預設顯示週一
         else:
-            st.caption(f"📅 顯示近 {len(unique_dates)} 日資料（最新日期在上方）")
+            st.session_state.selected_weekday = current_weekday  # 顯示當天
 
-            # 為每一天繪製時段分布圖
-            for date in unique_dates:
-                # 篩選該日期的資料
-                day_df = recent_df[recent_df['date'] == date].copy()
+    # 讀取周一到週五的聚合資料
+    weekday_data = get_weekday_aggregated_occupancy()
 
-                if day_df.empty:
-                    continue
+    if weekday_data is None or len(weekday_data) == 0:
+        st.info("ℹ️ 暫無熱門時段資料")
+        return
 
-                # 提取時間區間資訊（15 分鐘區間）
-                if 'time_interval' in day_df.columns:
-                    # 從 time_interval (例如 "09:00-09:15") 提取開始時間
-                    day_df['start_time'] = day_df['time_interval'].str.split('-').str[0]
-                    day_df['hour'] = day_df['start_time'].str.split(':').str[0].astype(int)
-                    day_df['minute'] = day_df['start_time'].str.split(':').str[1].astype(int)
-                elif 'datetime' in day_df.columns:
-                    day_df['dt'] = pd.to_datetime(day_df['datetime'])
-                    day_df['hour'] = day_df['dt'].dt.hour
-                    day_df['minute'] = day_df['dt'].dt.minute
-                elif 'time' in day_df.columns:
-                    day_df['hour'] = day_df['time'].str.split(':').str[0].astype(int)
-                    day_df['minute'] = day_df['time'].str.split(':').str[1].astype(int)
+    # 星期名稱對應
+    weekday_names = ['週一', '週二', '週三', '週四', '週五']
 
-                # 只保留 9:00-21:00 的資料（注意 21:00 是最後一個時段）
-                interval_data = day_df[(day_df['hour'] >= 9) & (day_df['hour'] < 21)].copy()
+    # 建立標題列（包含左右箭頭）
+    col_left, col_title, col_right = st.columns([1, 8, 1])
 
-                # 計算時間軸位置（9:00 = 0, 9:15 = 0.25, 9:30 = 0.5, ..., 20:45 = 11.75）
-                interval_data['time_position'] = (interval_data['hour'] - 9) + (interval_data['minute'] / 60)
+    with col_left:
+        # 左箭頭按鈕
+        if st.button("◀", key="prev_weekday", help="上一天"):
+            st.session_state.selected_weekday = (st.session_state.selected_weekday - 1) % 5
 
-                # 顯示日期標題（包含星期幾）
-                weekday_name = ['週一', '週二', '週三', '週四', '週五', '週六', '週日'][date.weekday()]
-                st.markdown(f"**{date.strftime('%Y-%m-%d')} ({weekday_name})**")
+    with col_title:
+        # 顯示當前選擇的星期
+        current_weekday = st.session_state.selected_weekday
+        weekday_name = weekday_names[current_weekday]
+        st.markdown(f"<div style='text-align: center; font-size: 1.2rem; font-weight: bold;'>{weekday_name}</div>", unsafe_allow_html=True)
 
-                # 繪製膠囊圖（類似圖片範例）
-                fig = go.Figure()
+    with col_right:
+        # 右箭頭按鈕
+        if st.button("▶", key="next_weekday", help="下一天"):
+            st.session_state.selected_weekday = (st.session_state.selected_weekday + 1) % 5
 
-                # 找出最大佔用數以標準化高度
-                max_occupancy = interval_data['occupancy_count'].max() if not interval_data.empty else 1
+    # 取得當前選擇的星期資料
+    if current_weekday not in weekday_data:
+        st.info(f"ℹ️ {weekday_name}暫無資料")
+        return
 
-                for _, row in interval_data.iterrows():
-                    time_pos = row['time_position']
-                    occupancy = row['occupancy_count']
+    interval_data = weekday_data[current_weekday]
 
-                    # 計算膠囊高度（標準化）
-                    height = (occupancy / max_occupancy) * 0.8 if max_occupancy > 0 else 0
+    # 只保留 9:00-21:00 的資料
+    interval_data = interval_data[(interval_data['hour'] >= 9) & (interval_data['hour'] < 21)].copy()
 
-                    # 決定顏色（根據佔用率）
-                    if occupancy >= max_occupancy * 0.8:
-                        color = '#d946a6'  # 高峰時段（粉紅色）
-                    elif occupancy >= max_occupancy * 0.5:
-                        color = '#94a3b8'  # 中等時段（灰藍色）
-                    else:
-                        color = '#94a3b8'  # 低峰時段（灰藍色）
+    if interval_data.empty:
+        st.info(f"ℹ️ {weekday_name}暫無資料")
+        return
 
-                    # 繪製膠囊形狀（圓角矩形，寬度調整為 0.1 以適應 15 分鐘區間，避免重疊）
-                    fig.add_shape(
-                        type="rect",
-                        x0=time_pos - 0.1, x1=time_pos + 0.1,
-                        y0=0, y1=height,
-                        fillcolor=color,
-                        line=dict(width=0),
-                        opacity=0.8
-                    )
+    # 計算時間軸位置（9:00 = 0, 9:15 = 0.25, 9:30 = 0.5, ..., 20:45 = 11.75）
+    interval_data['time_position'] = (interval_data['hour'] - 9) + (interval_data['minute'] / 60)
 
-                    # 顯示數值（在膠囊上方，僅顯示整點的數值以避免擁擠）
-                    if occupancy > 0 and row['minute'] == 0:
-                        fig.add_annotation(
-                            x=time_pos,
-                            y=height + 0.05,
-                            text=f"{occupancy:.0f}",
-                            showarrow=False,
-                            font=dict(size=9, color='#666'),
-                            yanchor='bottom'
-                        )
+    # 繪製膠囊圖
+    fig = go.Figure()
 
-                # 設定圖表佈局（X 軸為 9:00-21:00）
-                fig.update_layout(
-                    height=150,
-                    xaxis=dict(
-                        tickmode='array',
-                        tickvals=[0, 3, 6, 9, 12],  # 對應 9時, 12時, 15時, 18時, 21時
-                        ticktext=['9時', '12時', '15時', '18時', '21時'],
-                        range=[-0.3, 12],  # 9:00-21:00 範圍，稍微緊湊避免左側空白
-                        showgrid=False,
-                        fixedrange=True
-                    ),
-                    yaxis=dict(
-                        showticklabels=False,
-                        showgrid=False,
-                        range=[0, 1],
-                        fixedrange=True
-                    ),
-                    margin=dict(l=10, r=10, t=10, b=30),
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    dragmode=False,  # 必須禁用以修復手機滾動問題
-                    hovermode=False
-                )
+    # 找出最大佔用數以標準化高度
+    max_occupancy = interval_data['occupancy_count'].max() if not interval_data.empty else 1
 
-                st.plotly_chart(fig, width='stretch', config={
-                    'displayModeBar': False,
-                    'scrollZoom': False  # 禁用滾輪縮放，確保觸控滾動正常
-                }, key=f"daily_{date}")
+    for _, row in interval_data.iterrows():
+        time_pos = row['time_position']
+        occupancy = row['occupancy_count']
+
+        # 計算膠囊高度（標準化）
+        height = (occupancy / max_occupancy) * 0.8 if max_occupancy > 0 else 0
+
+        # 決定顏色（根據佔用率）
+        if occupancy >= max_occupancy * 0.8:
+            color = '#d946a6'  # 高峰時段（粉紅色）
+        elif occupancy >= max_occupancy * 0.5:
+            color = '#94a3b8'  # 中等時段（灰藍色）
+        else:
+            color = '#94a3b8'  # 低峰時段（灰藍色）
+
+        # 繪製膠囊形狀（圓角矩形，寬度調整為 0.1 以適應 15 分鐘區間，避免重疊）
+        fig.add_shape(
+            type="rect",
+            x0=time_pos - 0.1, x1=time_pos + 0.1,
+            y0=0, y1=height,
+            fillcolor=color,
+            line=dict(width=0),
+            opacity=0.8
+        )
+
+        # 顯示數值（在膠囊上方，每個整點都顯示數值）
+        if row['minute'] == 0:
+            fig.add_annotation(
+                x=time_pos,
+                y=height + 0.05,
+                text=f"{occupancy:.0f}",
+                showarrow=False,
+                font=dict(size=9, color='#666'),
+                yanchor='bottom'
+            )
+
+    # 設定圖表佈局（X 軸為 9:00-21:00）
+    fig.update_layout(
+        height=150,
+        xaxis=dict(
+            tickmode='array',
+            tickvals=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],  # 對應 9時-21時，每小時
+            ticktext=['9時', '10時', '11時', '12時', '13時', '14時', '15時', '16時', '17時', '18時', '19時', '20時', '21時'],
+            range=[-0.3, 12],  # 9:00-21:00 範圍，稍微緊湊避免左側空白
+            showgrid=False,
+            fixedrange=True
+        ),
+        yaxis=dict(
+            showticklabels=False,
+            showgrid=False,
+            range=[0, 1],
+            fixedrange=True
+        ),
+        margin=dict(l=10, r=10, t=10, b=30),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        dragmode=False,  # 必須禁用以修復手機滾動問題
+        hovermode=False
+    )
+
+    st.plotly_chart(fig, width='stretch', config={
+        'displayModeBar': False,
+        'scrollZoom': False  # 禁用滾輪縮放，確保觸控滾動正常
+    }, key=f"weekday_{current_weekday}")
 
 
 def display_main_page():
@@ -574,9 +610,9 @@ def display_main_page():
     st.divider()
 
     # ============================================================
-    # 近日人流統計區塊（每 10 秒自動更新）
+    # 熱門時段區塊（每 10 秒自動更新）
     # ============================================================
-    st.subheader("📈 近日人流統計")
+    st.subheader("📈 熱門時段")
     display_live_statistics()
 
     st.divider()
@@ -609,7 +645,7 @@ def display_main_page():
         # 使用 expander 顯示菜單圖片（避免佔用過多空間）
         with st.expander("📖 點此展開查看菜單圖片", expanded=False):
             for i, menu_file in enumerate(menu_files):
-                st.image(menu_file, caption=f"菜單頁面 {i+1}", use_container_width=True)
+                st.image(menu_file, caption=f"菜單頁面 {i+1}", width="stretch")
     else:
         st.info("ℹ️ 目前尚無菜單圖片")
         st.markdown("""
