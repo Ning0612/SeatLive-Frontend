@@ -16,6 +16,7 @@ import plotly.graph_objects as go
 from dotenv import load_dotenv
 import glob
 import re
+import streamlit.components.v1 as components
 
 # 載入環境變數
 load_dotenv()
@@ -468,16 +469,7 @@ def display_live_seat_status():
 
 @st.fragment(run_every="10s")
 def display_live_statistics():
-    """熱門時段區塊（顯示周一到週五的人流分析，可左右切換）"""
-    # 初始化 session_state 記錄當前選擇的星期
-    if 'selected_weekday' not in st.session_state:
-        current_weekday = datetime.now().weekday()  # 0=週一, 6=週日
-        # 如果是週六(5)或週日(6)，預設顯示週一(0)；否則顯示當天
-        if current_weekday >= 5:
-            st.session_state.selected_weekday = 0  # 週六日預設顯示週一
-        else:
-            st.session_state.selected_weekday = current_weekday  # 顯示當天
-
+    """熱門時段區塊（使用 st.tabs 避免 FOUC，客戶端切換無延遲）"""
     # 讀取周一到週五的聚合資料
     weekday_data = get_weekday_aggregated_occupancy()
 
@@ -485,115 +477,304 @@ def display_live_statistics():
         st.info("ℹ️ 暫無熱門時段資料")
         return
 
-    # 星期名稱對應
     weekday_names = ['週一', '週二', '週三', '週四', '週五']
 
-    # 建立標題列（包含左右箭頭）
-    col_left, col_title, col_right = st.columns([1, 8, 1])
+    # 決定預設顯示哪一天
+    current_weekday = datetime.now().weekday()
+    if current_weekday >= 5:
+        default_weekday = 0
+    else:
+        default_weekday = current_weekday
 
-    with col_left:
-        # 左箭頭按鈕
-        if st.button("◀", key="prev_weekday", help="上一天"):
-            st.session_state.selected_weekday = (st.session_state.selected_weekday - 1) % 5
+    # CSS：隱藏原生的 tabs 標籤列 + 優化按鈕佈局
+    st.markdown("""
+    <style>
+    /* 隱藏原生 Tabs 的標籤列 */
+    .stTabs [data-baseweb="tab-list"] {
+        display: none !important;
+    }
 
-    with col_title:
-        # 顯示當前選擇的星期
-        current_weekday = st.session_state.selected_weekday
-        weekday_name = weekday_names[current_weekday]
-        st.markdown(f"<div style='text-align: center; font-size: 1.2rem; font-weight: bold;'>{weekday_name}</div>", unsafe_allow_html=True)
+    /* 針對手機端優化星期選擇器 */
+    @media (max-width: 576px) {
+        #weekday-selector {
+            gap: 0.5rem !important;
+        }
+        #weekday-selector button {
+            padding: 0.4rem 0.8rem !important;
+            font-size: 0.9rem !important;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-    with col_right:
-        # 右箭頭按鈕
-        if st.button("▶", key="next_weekday", help="下一天"):
-            st.session_state.selected_weekday = (st.session_state.selected_weekday + 1) % 5
+    # UI 佈局（按鈕 + 星期名稱在同一個水平容器中）
+    st.markdown(f"""
+    <div id="weekday-selector" style="
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+        margin: 1rem 0;
+        flex-wrap: nowrap;
+        width: 100%;">
+        <button id="btn-prev" style="
+            background: #f0f2f6;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            font-size: 1rem;
+            flex-shrink: 0;
+            line-height: 1;">
+            ◀
+        </button>
+        <div id="weekday-title" style="
+            font-size: 1.2rem;
+            font-weight: bold;
+            min-width: 60px;
+            text-align: center;
+            white-space: nowrap;">
+            {weekday_names[default_weekday]}
+        </div>
+        <button id="btn-next" style="
+            background: #f0f2f6;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            font-size: 1rem;
+            flex-shrink: 0;
+            line-height: 1;">
+            ▶
+        </button>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # 取得當前選擇的星期資料
-    if current_weekday not in weekday_data:
-        st.info(f"ℹ️ {weekday_name}暫無資料")
-        return
+    # 找出所有資料中的最大佔用數（統一標準化高度）
+    all_max_occupancy = 1
+    for weekday in range(5):
+        if weekday in weekday_data:
+            interval_data = weekday_data[weekday]
+            interval_data = interval_data[(interval_data['hour'] >= 9) & (interval_data['hour'] < 21)].copy()
+            if not interval_data.empty:
+                max_occ = interval_data['occupancy_count'].max()
+                if max_occ > all_max_occupancy:
+                    all_max_occupancy = max_occ
 
-    interval_data = weekday_data[current_weekday]
+    # 使用 st.tabs 創建五個標籤頁（原生支援，無 FOUC）
+    tabs = st.tabs(weekday_names)
 
-    # 只保留 9:00-21:00 的資料
-    interval_data = interval_data[(interval_data['hour'] >= 9) & (interval_data['hour'] < 21)].copy()
+    # 在每個 tab 中渲染對應的圖表
+    for weekday, tab in enumerate(tabs):
+        with tab:
+            if weekday not in weekday_data:
+                st.info("ℹ️ 暫無資料")
+                continue
 
-    if interval_data.empty:
-        st.info(f"ℹ️ {weekday_name}暫無資料")
-        return
+            interval_data = weekday_data[weekday]
+            interval_data = interval_data[(interval_data['hour'] >= 9) & (interval_data['hour'] < 21)].copy()
 
-    # 計算時間軸位置（9:00 = 0, 9:15 = 0.25, 9:30 = 0.5, ..., 20:45 = 11.75）
-    interval_data['time_position'] = (interval_data['hour'] - 9) + (interval_data['minute'] / 60)
+            if interval_data.empty:
+                st.info("ℹ️ 暫無資料")
+                continue
 
-    # 繪製膠囊圖
-    fig = go.Figure()
+            # 計算時間軸位置
+            interval_data['time_position'] = (interval_data['hour'] - 9) + (interval_data['minute'] / 60)
 
-    # 找出最大佔用數以標準化高度
-    max_occupancy = interval_data['occupancy_count'].max() if not interval_data.empty else 1
+            # 繪製膠囊圖
+            fig = go.Figure()
 
-    for _, row in interval_data.iterrows():
-        time_pos = row['time_position']
-        occupancy = row['occupancy_count']
+            for _, row in interval_data.iterrows():
+                time_pos = row['time_position']
+                occupancy = row['occupancy_count']
+                height = (occupancy / all_max_occupancy) * 0.8 if all_max_occupancy > 0 else 0
 
-        # 計算膠囊高度（標準化）
-        height = (occupancy / max_occupancy) * 0.8 if max_occupancy > 0 else 0
+                if occupancy >= all_max_occupancy * 0.8:
+                    color = '#d946a6'
+                elif occupancy >= all_max_occupancy * 0.5:
+                    color = '#94a3b8'
+                else:
+                    color = '#94a3b8'
 
-        # 決定顏色（根據佔用率）
-        if occupancy >= max_occupancy * 0.8:
-            color = '#d946a6'  # 高峰時段（粉紅色）
-        elif occupancy >= max_occupancy * 0.5:
-            color = '#94a3b8'  # 中等時段（灰藍色）
-        else:
-            color = '#94a3b8'  # 低峰時段（灰藍色）
+                fig.add_shape(
+                    type="rect",
+                    x0=time_pos - 0.1, x1=time_pos + 0.1,
+                    y0=0, y1=height,
+                    fillcolor=color,
+                    line=dict(width=0),
+                    opacity=0.8
+                )
 
-        # 繪製膠囊形狀（圓角矩形，寬度調整為 0.1 以適應 15 分鐘區間，避免重疊）
-        fig.add_shape(
-            type="rect",
-            x0=time_pos - 0.1, x1=time_pos + 0.1,
-            y0=0, y1=height,
-            fillcolor=color,
-            line=dict(width=0),
-            opacity=0.8
-        )
+                if row['minute'] == 0:
+                    fig.add_annotation(
+                        x=time_pos,
+                        y=height + 0.05,
+                        text=f"{occupancy:.0f}",
+                        showarrow=False,
+                        font=dict(size=9, color='#666'),
+                        yanchor='bottom'
+                    )
 
-        # 顯示數值（在膠囊上方，每個整點都顯示數值）
-        if row['minute'] == 0:
-            fig.add_annotation(
-                x=time_pos,
-                y=height + 0.05,
-                text=f"{occupancy:.0f}",
-                showarrow=False,
-                font=dict(size=9, color='#666'),
-                yanchor='bottom'
+            fig.update_layout(
+                height=150,
+                xaxis=dict(
+                    tickmode='array',
+                    tickvals=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+                    ticktext=['9時', '10時', '11時', '12時', '13時', '14時', '15時', '16時', '17時', '18時', '19時', '20時', '21時'],
+                    range=[-0.3, 12],
+                    showgrid=False,
+                    fixedrange=True
+                ),
+                yaxis=dict(
+                    showticklabels=False,
+                    showgrid=False,
+                    range=[0, 1],
+                    fixedrange=True
+                ),
+                margin=dict(l=10, r=10, t=10, b=30),
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                dragmode=False,
+                hovermode=False
             )
 
-    # 設定圖表佈局（X 軸為 9:00-21:00）
-    fig.update_layout(
-        height=150,
-        xaxis=dict(
-            tickmode='array',
-            tickvals=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],  # 對應 9時-21時，每小時
-            ticktext=['9時', '10時', '11時', '12時', '13時', '14時', '15時', '16時', '17時', '18時', '19時', '20時', '21時'],
-            range=[-0.3, 12],  # 9:00-21:00 範圍，稍微緊湊避免左側空白
-            showgrid=False,
-            fixedrange=True
-        ),
-        yaxis=dict(
-            showticklabels=False,
-            showgrid=False,
-            range=[0, 1],
-            fixedrange=True
-        ),
-        margin=dict(l=10, r=10, t=10, b=30),
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        dragmode=False,  # 必須禁用以修復手機滾動問題
-        hovermode=False
-    )
+            st.plotly_chart(fig, use_container_width=True, config={
+                'displayModeBar': False,
+                'scrollZoom': False
+            }, key=f"weekday_chart_{weekday}")
 
-    st.plotly_chart(fig, width='stretch', config={
-        'displayModeBar': False,
-        'scrollZoom': False  # 禁用滾輪縮放，確保觸控滾動正常
-    }, key=f"weekday_{current_weekday}")
+    # 滑動提示
+    st.markdown("""
+    <div style="text-align: center; color: #999; font-size: 0.75rem; margin-top: 0.5rem;">
+        💡 提示：點擊左右按鈕可切換星期
+    </div>
+    """, unsafe_allow_html=True)
+
+    # JavaScript：控制 st.tabs 切換與滑動手勢
+    components.html(f"""
+    <script>
+    (function() {{
+        const weekdayNames = ['週一', '週二', '週三', '週四', '週五'];
+        let currentWeekday = {default_weekday};
+        let tabButtons = [];
+        let isInitialized = false;
+        let touchStartX = 0;
+        let touchEndX = 0;
+
+        // 切換到指定的星期（透過點擊 st.tabs 的 tab button）
+        function switchWeekday(newWeekday) {{
+            if (newWeekday < 0 || newWeekday > 4) return;
+            if (tabButtons.length !== 5) return;
+
+            // 點擊對應的 tab button
+            tabButtons[newWeekday].click();
+            currentWeekday = newWeekday;
+
+            // 更新自訂的星期標題
+            const title = window.parent.document.getElementById('weekday-title');
+            if (title) title.textContent = weekdayNames[newWeekday];
+        }}
+
+        // 綁定按鈕點擊與滑動事件
+        function bindEvents() {{
+            // 綁定左右箭頭按鈕
+            const btnPrev = window.parent.document.getElementById('btn-prev');
+            const btnNext = window.parent.document.getElementById('btn-next');
+
+            if (btnPrev) {{
+                btnPrev.addEventListener('click', function() {{
+                    switchWeekday((currentWeekday - 1 + 5) % 5);
+                }}, {{ passive: true }});
+            }}
+
+            if (btnNext) {{
+                btnNext.addEventListener('click', function() {{
+                    switchWeekday((currentWeekday + 1) % 5);
+                }}, {{ passive: true }});
+            }}
+
+            // 在圖表區域綁定滑動手勢
+            const tabContent = window.parent.document.querySelector('[data-testid="stTabs"]');
+            if (tabContent) {{
+                tabContent.addEventListener('touchstart', function(e) {{
+                    touchStartX = e.changedTouches[0].clientX;
+                }}, {{ passive: true }});
+
+                tabContent.addEventListener('touchend', function(e) {{
+                    // 檢查是否在 Plotly 圖表上滑動（避免與圖表交互衝突）
+                    if (e.target.closest('.js-plotly-plot') || e.target.closest('[data-testid="stPlotlyChart"]')) {{
+                        return; // 在圖表上的滑動不觸發切換
+                    }}
+
+                    touchEndX = e.changedTouches[0].clientX;
+                    const swipeDiff = touchStartX - touchEndX;
+
+                    // 滑動距離超過 80px 才觸發切換
+                    if (Math.abs(swipeDiff) > 80) {{
+                        if (swipeDiff > 0) {{
+                            // 向左滑動：下一天
+                            switchWeekday((currentWeekday + 1) % 5);
+                        }} else {{
+                            // 向右滑動：上一天
+                            switchWeekday((currentWeekday - 1 + 5) % 5);
+                        }}
+                    }}
+                }}, {{ passive: true }});
+            }}
+        }}
+
+        // 初始化
+        function init() {{
+            if (isInitialized) return;
+
+            // 設定初始 tab
+            switchWeekday(currentWeekday);
+
+            // 綁定事件
+            bindEvents();
+
+            isInitialized = true;
+        }}
+
+        // 等待 st.tabs 的 tab buttons 載入完成
+        function waitForTabs() {{
+            const targetNode = window.parent.document.querySelector('[data-testid="stAppViewContainer"]');
+            if (!targetNode) {{
+                setTimeout(waitForTabs, 100);
+                return;
+            }}
+
+            const observer = new MutationObserver((mutationsList, observer) => {{
+                // 尋找 st.tabs 的 tab buttons（被我們用 CSS 隱藏的那些）
+                const buttons = window.parent.document.querySelectorAll('[data-baseweb="tab"]');
+                if (buttons.length >= 5) {{
+                    tabButtons = Array.from(buttons);
+                    init();
+                    observer.disconnect();
+                }}
+            }});
+
+            observer.observe(targetNode, {{ childList: true, subtree: true }});
+
+            // 5 秒後強制停止監聽
+            setTimeout(() => {{
+                observer.disconnect();
+                if (!isInitialized) {{
+                    // 備用方案：直接嘗試取得 tab buttons
+                    const buttons = window.parent.document.querySelectorAll('[data-baseweb="tab"]');
+                    if (buttons.length >= 5) {{
+                        tabButtons = Array.from(buttons);
+                        init();
+                    }}
+                }}
+            }}, 5000);
+        }}
+
+        // 啟動
+        waitForTabs();
+    }})();
+    </script>
+    """, height=0)
 
 
 def display_main_page():
