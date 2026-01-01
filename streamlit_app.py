@@ -207,15 +207,35 @@ def get_weekday_aggregated_occupancy():
     """
     從 Firebase 讀取周一到週五的聚合統計資料
 
+    動態查找每個星期最新有資料的週次（支援跨年查詢）
+    - 往前查詢最多 12 週（約 3 個月）
+    - 對每個星期（週一到週五）分別找出最新有資料的週次
+
     Returns:
         dict: {weekday: DataFrame} 格式，weekday 為 0-4（週一到週五）
     """
     try:
-        # 取得當前週次和前幾週
+        # 取得當前週次
         current_week = datetime.now().isocalendar()[1]
-        weeks_to_fetch = [current_week - i for i in range(4) if current_week - i > 0]  # 取最近 4 週
 
-        all_data = []
+        # 計算要查詢的週次範圍（往前查 12 週，約 3 個月，支援跨年）
+        weeks_to_fetch = []
+        for i in range(12):
+            week_num = current_week - i
+            if week_num > 0:
+                weeks_to_fetch.append(week_num)
+            else:
+                # 跨年情況：計算前一年的週次
+                # ISO 週次系統中，一年有 52 或 53 週
+                # week_num = 0 → 前一年第 53 週
+                # week_num = -1 → 前一年第 52 週
+                # week_num = -2 → 前一年第 51 週，以此類推
+                previous_year_week = 53 + week_num
+                if previous_year_week > 0:  # 確保週次有效
+                    weeks_to_fetch.append(previous_year_week)
+
+        # 收集所有週次的資料（按星期分組）
+        weekday_data_by_week = {weekday: [] for weekday in range(5)}  # 0-4 代表週一到週五
 
         # 從可能的週次中取得詳細資料
         for week_num in weeks_to_fetch:
@@ -225,23 +245,33 @@ def get_weekday_aggregated_occupancy():
             if data and 'detail_data' in data:
                 detail_df = pd.DataFrame(data['detail_data'])
                 if not detail_df.empty:
-                    all_data.append(detail_df)
+                    # 確保有必要的欄位
+                    if 'datetime' in detail_df.columns:
+                        detail_df['datetime'] = pd.to_datetime(detail_df['datetime'])
 
-        if not all_data:
+                    # 按星期分組儲存資料
+                    for weekday in range(5):  # 只處理週一到週五
+                        weekday_df = detail_df[detail_df['weekday'] == weekday].copy()
+                        if not weekday_df.empty:
+                            # 記錄這個週次和對應的資料
+                            weekday_data_by_week[weekday].append({
+                                'week_num': week_num,
+                                'data': weekday_df
+                            })
+
+        # 對每個星期，只保留最新有資料的週次
+        all_latest_data = []
+        for weekday in range(5):
+            if weekday_data_by_week[weekday]:
+                # 取得該星期最新的資料（第一個就是最新的，因為 weeks_to_fetch 是從新到舊排序）
+                latest_data = weekday_data_by_week[weekday][0]['data']
+                all_latest_data.append(latest_data)
+
+        if not all_latest_data:
             return None
 
-        # 合併所有週次的資料
-        combined_df = pd.concat(all_data, ignore_index=True)
-
-        # 確保有必要的欄位
-        if 'datetime' in combined_df.columns:
-            combined_df['datetime'] = pd.to_datetime(combined_df['datetime'])
-
-        # 只保留周一到週五的資料（weekday 0-4）
-        combined_df = combined_df[combined_df['weekday'].isin([0, 1, 2, 3, 4])]
-
-        if combined_df.empty:
-            return None
+        # 合併所有星期的最新資料
+        combined_df = pd.concat(all_latest_data, ignore_index=True)
 
         # 按星期幾和時段聚合（取平均值）
         aggregated = combined_df.groupby(['weekday', 'weekday_zh', 'time_interval']).agg({
@@ -638,7 +668,7 @@ def display_live_statistics():
                 hovermode=False
             )
 
-            st.plotly_chart(fig, use_container_width=True, config={
+            st.plotly_chart(fig, width='stretch', config={
                 'displayModeBar': False,
                 'scrollZoom': False
             }, key=f"weekday_chart_{weekday}")
