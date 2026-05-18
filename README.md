@@ -4,7 +4,7 @@
 
 ## 🌐 線上 Demo
 
-**正式部署**: [https://seatlive.streamlit.app/](https://seatlive.streamlit.app/)
+**正式部署**: [https://seatlive.streamlit.app](https://seatlive.streamlit.app)
 
 ## 📱 功能特色
 
