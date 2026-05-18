@@ -18,7 +18,7 @@ jobs:
 
       - name: Keep Streamlit app awake
         env:
-          STREAMLIT_URL: https://seatlive-frontend-q9bnxuvhjwuowj24ayvc7p.streamlit.app
+          STREAMLIT_URL: https://seatlive.streamlit.app
         run: |
           python3 - <<EOF
           import os

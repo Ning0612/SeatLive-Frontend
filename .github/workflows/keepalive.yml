@@ -13,4 +13,4 @@ jobs:
       - name: Send keep-alive request to Streamlit app
         run: |
           echo "Pinging Streamlit app to keep it alive..."
-          curl -L -s https://seatlive-frontend-q9bnxuvhjwuowj24ayvc7p.streamlit.app > /dev/null || true
+          curl -L -s https://seatlive.streamlit.app > /dev/null || true
