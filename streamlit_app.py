@@ -838,13 +838,13 @@ def display_main_page():
     menu_files = sorted(glob.glob(os.path.join(menu_dir, 'menu_*.jpg')))
 
     if menu_files:
-        # 從檔名提取日期（例如：menu_2025_12_08-1.jpg -> 2025-12-08）
-        first_file = os.path.basename(menu_files[0])
-        date_match = re.search(r'menu_(\d{4})_(\d{2})_(\d{2})', first_file)
+        # 從檔名提取日期（例如：menu_2025_12_08-1.jpg -> 2025-12-08，暫時註解移除顯示）
+        # first_file = os.path.basename(menu_files[0])
+        # date_match = re.search(r'menu_(\d{4})_(\d{2})_(\d{2})', first_file)
 
-        if date_match:
-            menu_date = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
-            st.caption(f"📅 菜單更新日期：{menu_date}")
+        # if date_match:
+        #     menu_date = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
+        #     st.caption(f"📅 菜單更新日期：{menu_date}")
 
         # 餐廳資訊
         st.markdown("""
