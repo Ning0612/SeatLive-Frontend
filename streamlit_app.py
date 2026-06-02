@@ -880,8 +880,8 @@ def main():
     # 顯示主頁面（包含自動更新的 fragments）
     display_main_page()
 
-    # 底部版權資訊
-    st.markdown('<div class="footer">© 2025 安南屋-元智店 座位即時情況系統</div>', unsafe_allow_html=True)
+    # 底部版權資訊（暫時註解移除顯示）
+    # st.markdown('<div class="footer">© 2025 安南屋-元智店 座位即時情況系統</div>', unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
