@@ -313,22 +313,22 @@ def display_live_seat_status():
     available_seats = total_seats - occupied_seats
     occupancy_rate = (occupied_seats / total_seats * 100) if total_seats > 0 else 0
 
-    # 顯示上次資料更新時間（從座位狀態資料中取得最新的 last_update）
-    try:
-        # 取得所有座位的 last_update 時間，找出最新的一筆
-        last_updates = df['last_update'].dropna()
-        if not last_updates.empty:
-            # 找出最新的更新時間
-            latest_update = max(pd.to_datetime(last_updates))
-            update_time_str = latest_update.strftime('%Y-%m-%d %H:%M:%S')
-            st.caption(f"🕒 上次資料更新時間：{update_time_str}")
-        else:
-            st.caption(f"🕒 上次資料更新時間：無資料")
-    except Exception as e:
-        # 如果解析失敗，顯示當前時間作為備用
-        utc8_timezone = timezone(timedelta(hours=8))
-        current_time = datetime.now(utc8_timezone).strftime('%Y-%m-%d %H:%M:%S')
-        st.caption(f"🕒 現在時間：{current_time}")
+    # 顯示上次資料更新時間（從座位狀態資料中取得最新的 last_update，暫時註解移除顯示）
+    # try:
+    #     # 取得所有座位的 last_update 時間，找出最新的一筆
+    #     last_updates = df['last_update'].dropna()
+    #     if not last_updates.empty:
+    #         # 找出最新的更新時間
+    #         latest_update = max(pd.to_datetime(last_updates))
+    #         update_time_str = latest_update.strftime('%Y-%m-%d %H:%M:%S')
+    #         st.caption(f"🕒 上次資料更新時間：{update_time_str}")
+    #     else:
+    #         st.caption(f"🕒 上次資料更新時間：無資料")
+    # except Exception as e:
+    #     # 如果解析失敗，顯示當前時間作為備用
+    #     utc8_timezone = timezone(timedelta(hours=8))
+    #     current_time = datetime.now(utc8_timezone).strftime('%Y-%m-%d %H:%M:%S')
+    #     st.caption(f"🕒 現在時間：{current_time}")
 
     # 顯示統計卡片
     col1, col2, col3, col4 = st.columns(4)
